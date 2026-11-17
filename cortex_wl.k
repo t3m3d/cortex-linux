@@ -290,6 +290,9 @@ func truncLines(s, n) {
     emit out
 }
 // US keycode->char map (X11 keycodes = evdev+8 = cortex_wl's kc). For text entry.
+// X11-vestige (future-edit item): X11-style keycode grid (evdev+8), US layout
+// only. Migrate to xkbcommon (or a per-layout table from the wl_keyboard.keymap
+// event) if non-US layouts become a requirement. Constants only, no X11 dep.
 func setK(b, kc, ch) { bufSetByte(b, kc, charCode(ch)) }
 func buildKeymap() {
     let b = bufNew(128)
@@ -657,11 +660,12 @@ just run {
     let fd = wlConnect()
     if fd < 0 { print("connect failed")  exit(1) }
     let REG=2  let COMP=3  let SHM=4  let WM=5  let SEAT=6  let KB=7  let PTR=8
-    let SURF=9  let XS=10  let TOP=11  let POOL=12  let BUF=13
+    let SURF=9  let XS=10  let TOP=11  let SYNCB=12
 
     wlGetRegistry(fd, REG)
     let rb = bufNew(8192)
-    let rn = wlRecvInto(fd, rb, 8192)
+    let rn = wlSyncRegistry(fd, SYNCB, rb, 8192)
+    if rn < 0 { print("registry handshake failed")  exit(1) }
     wlBind(fd, REG, _wlFind(rb, rn, "wl_compositor"), "wl_compositor", 4, COMP)
     wlBind(fd, REG, _wlFind(rb, rn, "wl_shm"), "wl_shm", 1, SHM)
     wlBind(fd, REG, _wlFind(rb, rn, "xdg_wm_base"), "xdg_wm_base", 1, WM)
@@ -705,7 +709,7 @@ just run {
     let vidSml     = loadIcon("vidsml", vidFolderSvg(), 24)
     let deskSml    = loadIcon("desksml", deskFolderSvg(), 24)
     let places     = buildPlaces()
-    let nextId = 12
+    let nextId = 13
     let prevBuf = 0  let prevPool = 0  let prevMfd = 0
     let mouseX = 0  let mouseY = 0  let ctrlDown = 0  let altDown = 0
     let hist = cwd + "\n"  let histIdx = 0  let lastCwd = cwd  let fromHist = 0
