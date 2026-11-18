@@ -1,3 +1,5 @@
+// DEPRECATED (2026-11-17): X11 path retired — KryptOS is Wayland-only.
+// Kept as local X11-debug reference; delete before public release. See ANTI-X11.md section 4.
 #!/usr/bin/env -S kcc -r
 // build.ks — build cortex (pure-Krypton X11 file manager) to ./cortex.
 //   ./build.ks                         -> ./cortex

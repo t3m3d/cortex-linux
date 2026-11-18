@@ -1,3 +1,5 @@
+// DEPRECATED (2026-11-17): X11 path retired — KryptOS is Wayland-only.
+// Kept as local X11-debug reference; delete before public release. See ANTI-X11.md section 4.
 // cortex — a GUI file manager for Linux, in pure Krypton over raw X11.
 // M7: title bar + toolbar (Back / Forward / Refresh + typeable address bar),
 // quick-access sidebar, icon-grid main view. Sets WM_CLASS/WM_NAME ("cortex")
