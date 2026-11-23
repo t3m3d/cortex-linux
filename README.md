@@ -52,12 +52,17 @@ auto-refresh, `wofi`/`fzf` for Open With, and a terminal for "open terminal here
 - **Multi-select** — Space marks, Ctrl+A all; bulk copy / cut / trash
 - **Fuzzy filter & search** — type to filter with fuzzy matching, Enter to
   search subfolders
+- **Command palette** — Ctrl+K for quick actions/commands
+- **Preview pane** — Ctrl+P toggles bottom text/file preview
 - **File actions** — copy/cut/paste (no-clobber), rename, bulk rename (editor),
   trash, new file/folder, duplicate, compress to zip, extract archive, open
   terminal here, Open With
 - **Checksums & info** — Copy MD5/SHA-256, folder size, properties from context menu
+- **Inspect/compare** — hex view, text/markdown/json/yaml preview, duplicate finder,
+  folder compare, chmod/attributes, color labels, saved searches
 - **Auto-refresh** — inotify-based directory watch when `inotifywait` is available
 - **Thumbnails groundwork** — freedesktop thumbnail cache helpers for images/PDFs
+- **D-Bus helper** — `cortex-filemanager1.py` for org.freedesktop.FileManager1
 - **Light / dark theming** — from `~/.config/cortex/config` (`theme=dark|light|
   auto`) then system settings
 - **Session persistence** — last directory, view, sort, sort direction, hidden files
@@ -138,4 +143,18 @@ dropdown=0
 ## Desktop integration
 
 Install `cortex.desktop` to `~/.local/share/applications/` for launcher/menu
-integration and `inode/directory` handling.
+integration and `inode/directory` handling. `cortex-filemanager1.py` provides a
+minimal org.freedesktop.FileManager1 session service.
+
+## Not yet ported
+
+- Dual pane / tabs
+- Xdnd drag-and-drop
+- Embedded PTY terminal / SFTP browser
+- Marquee select
+- Full Git panel GUI (stage/unstage/discard/commit UI)
+- Native PDF/Quick Look preview
+- Smart collections UI / advanced saved search UI
+- Full thumbnail rendering in grid/list
+
+Excluded: Cortex Vaults.
