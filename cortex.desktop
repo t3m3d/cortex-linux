@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Cortex
+Comment=Pure Krypton X11 file manager
+Exec=cortex %F
+Icon=system-file-manager
+Terminal=false
+Categories=System;FileManager;
+MimeType=inode/directory;
+Keywords=files;file manager;browser;explorer;
+StartupWMClass=cortex

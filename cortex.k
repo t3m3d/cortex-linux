@@ -46,9 +46,9 @@ func cMenu(d)     { emit pick(d, rgb(255,255,255), rgb(40,43,50)) }
 func cMenuHi(d)   { emit pick(d, rgb(31,164,99),   rgb(52,199,126)) }
 func MENUW()      { emit 168 }
 func MENUROW()    { emit 26 }
-func menuItems()  { emit "Open\nCut\nCopy\nPaste\nRename\nMove to Trash\nNew Folder\nOpen Terminal\nDuplicate\nCompress\nProperties" }
+func menuItems()  { emit "Open\nOpen With...\nCut\nCopy\nPaste\nRename\nBulk Rename...\nMove to Trash\nNew Folder\nOpen Terminal\nDuplicate\nCompress\nProperties\nCopy MD5\nCopy SHA-256\nFolder Size\nGit Status\nGit Pull\nGit Push" }
 func helpText() {
-    emit "cortex — keyboard shortcuts\n \nEnter / double-click    open file or folder\nBackspace               go up\nAlt+Left / Alt+Right    back / forward\nAlt+Home                home folder\ntype a name             jump to it\narrows / PageUp/Down     move selection\nHome / End              first / last\nCtrl+L                  edit address bar\nF2                      rename\nSpace                   mark / unmark item\nCtrl+A                  select all\nCtrl+Shift+A            clear selection\nDelete                  trash selection (or item)\nCtrl+C / X / V          copy / cut / paste\nCtrl+N                  new file\nCtrl+Shift+N            new folder\nCtrl+I                  properties\nCtrl+Shift+C            copy path\nCtrl+H                  toggle hidden\nCtrl+S                  cycle sort\nCtrl+1 / Ctrl+2         icon / list view\nTab                     toggle view\nCtrl+F                  search (Enter = subfolders)\nF5                      refresh\nCtrl+D                  bookmark dir\nCtrl+Shift+D            remove bookmark\nCtrl+E                  extract archive\nCtrl+Shift+Z            compress to zip\nCtrl+Shift+R            duplicate\nCtrl+Shift+T            trash view\nCtrl+M                  mount all drives\nF4                      open terminal here\nright-click             context menu\nright-click a drive     unmount it\nF1                      this help\nEsc                     close / quit"
+    emit "cortex — keyboard shortcuts\n \nEnter / double-click    open file or folder\nBackspace               go up\nAlt+Left / Alt+Right    back / forward\nAlt+Home                home folder\ntype a name             jump to it\narrows / PageUp/Down     move selection\nHome / End              first / last\nCtrl+L                  edit address bar\nF2                      rename\nSpace                   mark / unmark item\nCtrl+A                  select all\nCtrl+Shift+A            clear selection\nDelete                  trash selection (or item)\nCtrl+C / X / V          copy / cut / paste\nCtrl+N                  new file\nCtrl+Shift+N            new folder\nF7                      new folder\nF8 / Delete             trash\nCtrl+I                  properties\nCtrl+Shift+C            copy path\nCtrl+H                  toggle hidden\nCtrl+S                  cycle sort\nCtrl+Shift+S            toggle sort direction\nCtrl+1 / Ctrl+2         icon / list view\nTab                     toggle view\nCtrl+F                  search (Enter = subfolders)\nF5                      refresh\nCtrl+D                  bookmark dir\nCtrl+Shift+D            remove bookmark\nCtrl+E                  extract archive\nCtrl+Shift+Z            compress to zip\nCtrl+Shift+R            duplicate\nCtrl+Shift+T            trash view\nCtrl+M                  mount all drives\nF4                      open terminal here\nright-click             context menu (git/checksums)\nright-click a drive     unmount it\nF1                      this help\nEsc                     close / quit"
 }
 func ICONSML()   { emit 20 }
 func ICONBIG()   { emit 96 }
@@ -320,17 +320,32 @@ func keyChar(kmap, kc, shift) {
     emit fromCharCode(c)
 }
 
-// ── places (quick-access sidebar) ──────────────────────────────────────
+// ── config / places ────────────────────────────────────────────────────
 func homeDir() { emit chomp(exec("printf %s \"$HOME\"")) }
-
-// dark mode? config file wins (~/.config/cortex/config: theme=dark|light|auto),
-// else the system preference (gsettings color-scheme / gtk-theme), else light.
+func cfgPath() { emit homeDir() + "/.config/cortex/config" }
+func cfgGet(key) {
+    let v = chomp(exec("grep -iE '^[ ]*" + key + "[ ]*=' '" + cfgPath() + "' 2>/dev/null | head -1 | sed 's/[^=]*=//' | sed 's/^ *//;s/ *$//'"))
+    emit v
+}
+func cfgGetDefault(key, def) {
+    let v = cfgGet(key)
+    if v == "" { emit def }
+    emit v
+}
+func xdgUserDir(name) {
+    let v = chomp(exec("xdg-user-dir " + name + " 2>/dev/null"))
+    if v == "" || v == homeDir() { emit "" }
+    emit v
+}
+func hyprAccent() {
+    let c = chomp(exec("hyprctl getoption general:col.active_border -j 2>/dev/null | grep -oE '0xff[0-9a-fA-F]{6}' | head -1"))
+    if len(c) == 10 { emit "#" + substring(c, 4, 10) }
+    emit ""
+}
 func detectDark() {
-    let cfg = homeDir() + "/.config/cortex/config"
-    let t = chomp(exec("grep -iE '^[ ]*theme[ ]*=' '" + cfg + "' 2>/dev/null | head -1 | sed 's/[^=]*=//' | tr -d ' '"))
+    let t = lowerStr(cfgGet("theme"))
     if t == "dark" { emit 1 }
     if t == "light" { emit 0 }
-    // auto / unset -> system
     let cs = exec("gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null")
     if contains(cs, "dark") { emit 1 }
     let gtk = exec("gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null")
@@ -345,28 +360,69 @@ func maybeAdd(out, label, path) {
     if existsDir(path) { emit addPlace(out, label, path) }
     emit out
 }
+func addPlaceIfMissing(out, label, path) {
+    if path == "" || existsDir(path) == 0 { emit out }
+    // avoid duplicates
+    let n = countLines(out)
+    let i = 0
+    while i < n {
+        let ln = nthLine(out, i)
+        if afterBar(ln) == path { emit out }
+        i = i + 1
+    }
+    emit addPlace(out, label, path)
+}
 func buildPlaces() {
     let home = homeDir()
     let out = addPlace("", "Home", home)
-    out = maybeAdd(out, "Desktop", home + "/Desktop")
-    out = maybeAdd(out, "Documents", home + "/Documents")
-    out = maybeAdd(out, "Downloads", home + "/Downloads")
-    out = maybeAdd(out, "Pictures", home + "/Pictures")
-    out = maybeAdd(out, "Music", home + "/Music")
-    out = maybeAdd(out, "Videos", home + "/Videos")
+    let desk = xdgUserDir("DESKTOP")  if desk == "" { desk = home + "/Desktop" }
+    let docs = xdgUserDir("DOCUMENTS")  if docs == "" { docs = home + "/Documents" }
+    let dls = xdgUserDir("DOWNLOAD")  if dls == "" { dls = home + "/Downloads" }
+    let pics = xdgUserDir("PICTURES")  if pics == "" { pics = home + "/Pictures" }
+    let mus = xdgUserDir("MUSIC")  if mus == "" { mus = home + "/Music" }
+    let vids = xdgUserDir("VIDEOS")  if vids == "" { vids = home + "/Videos" }
+    out = maybeAdd(out, "Desktop", desk)
+    out = maybeAdd(out, "Documents", docs)
+    out = maybeAdd(out, "Downloads", dls)
+    out = maybeAdd(out, "Pictures", pics)
+    out = maybeAdd(out, "Music", mus)
+    out = maybeAdd(out, "Videos", vids)
     out = addPlace(out, "Filesystem", "/")
-    let bm = readFile(bookmarksPath())
+    // GTK bookmarks
+    let gb = readFile(home + "/.config/gtk-3.0/bookmarks")
     let i = 0
     let line = ""
-    while i < len(bm) {
-        let ch = bm[i]
+    while i <= len(gb) {
+        let ch = fromCharCode(10)
+        if i < len(gb) { ch = gb[i] }
         if ch == fromCharCode(10) {
-            if line != "" && existsDir(line) { out = addPlace(out, basename(line), line) }
+            if line != "" {
+                let p = line
+                let sp = indexOf(p, " ")
+                let lbl = ""
+                if sp >= 0 { lbl = substring(p, sp + 1, len(p))  p = substring(p, 0, sp) }
+                if startsWith(p, "file://") { p = substring(p, 7, len(p)) }
+                p = chomp(exec("printf '%b' '" + p + "'"))
+                if lbl == "" { lbl = basename(p) }
+                if p != "" && existsDir(p) { out = addPlaceIfMissing(out, lbl, p) }
+            }
             line = ""
         } else { line = line + ch }
-        i += 1
+        i = i + 1
     }
-    if line != "" && existsDir(line) { out = addPlace(out, basename(line), line) }
+    // cortex bookmarks
+    let bm = readFile(bookmarksPath())
+    i = 0
+    line = ""
+    while i <= len(bm) {
+        let ch = fromCharCode(10)
+        if i < len(bm) { ch = bm[i] }
+        if ch == fromCharCode(10) {
+            if line != "" && existsDir(line) { out = addPlaceIfMissing(out, basename(line), line) }
+            line = ""
+        } else { line = line + ch }
+        i = i + 1
+    }
     emit out
 }
 func addBookmark(cwd) {
@@ -429,7 +485,11 @@ func buildSidebar() {
 
 // ── directory model ────────────────────────────────────────────────────
 // open / file-op helpers
-func openFile(path) { exec("setsid xdg-open '" + path + "' >/dev/null 2>&1 &") }
+func openFile(path) {
+    let op = cfgGet("opener")
+    if op == "" { op = "xdg-open" }
+    exec("setsid " + op + " '" + path + "' >/dev/null 2>&1 &")
+}
 func newFolder(cwd) { exec("mkdir -p '" + cwd + "/New Folder'") }
 func renameTo(cwd, old, nw) { exec("mv -n '" + cwd + "/" + old + "' '" + cwd + "/" + nw + "' 2>/dev/null") }
 func trashItem(path) { exec("gio trash '" + path + "' 2>/dev/null || trash-put '" + path + "' 2>/dev/null || true") }
@@ -470,7 +530,141 @@ func pasteClip(cwd, clipboard, op) {
 func newFile(cwd) { exec("touch '" + cwd + "/New File'") }
 func copyPath(path) { exec("printf '%s' '" + path + "' | wl-copy 2>/dev/null || printf '%s' '" + path + "' | xclip -sel clip 2>/dev/null") }
 func showProps(path, name) {
-    exec("notify-send -a cortex 'cortex — " + name + "' \"$(stat --printf 'Size: %s bytes\\nType: %F\\nPerms: %A\\nModified: %y' '" + path + "' 2>/dev/null)\" 2>/dev/null")
+    let info = chomp(exec("stat --printf 'Size: %s bytes\\nType: %F\\nPerms: %A\\nOwner: %U:%G\\nModified: %y\\nAccessed: %x' '" + path + "' 2>/dev/null"))
+    if existsDir(path) { let ds = chomp(exec("du -sh '" + path + "' 2>/dev/null | cut -f1"))  info = info + "\\nFolder size: " + ds }
+    exec("notify-send -a cortex 'cortex — " + name + "' \"" + info + "\" 2>/dev/null")
+}
+func copyChecksum(path, algo) {
+    let h = ""
+    if algo == "md5" { h = chomp(exec("md5sum '" + path + "' 2>/dev/null | cut -d' ' -f1")) }
+    else { h = chomp(exec("sha256sum '" + path + "' 2>/dev/null | cut -d' ' -f1")) }
+    if h != "" { copyPath(h)  exec("notify-send -a cortex 'cortex' '" + algo + " copied: " + h + "' 2>/dev/null") }
+}
+func showFolderSize(path, name) {
+    let ds = chomp(exec("du -sh '" + path + "' 2>/dev/null | cut -f1"))
+    exec("notify-send -a cortex 'cortex — " + name + "' 'Folder size: " + ds + "' 2>/dev/null")
+}
+func showGitStatus(dir) {
+    if gitIsRepo(dir) == 0 { exec("notify-send -a cortex 'cortex' 'Not a git repository' 2>/dev/null")  emit "" }
+    let st = chomp(exec("git -C '" + dir + "' status -sb 2>/dev/null | head -40"))
+    writeFile("/tmp/cortex-git-status.txt", st)
+    exec("setsid sh -c '${TERMINAL:-$(command -v ghostty kitty alacritty foot wezterm xterm 2>/dev/null | head -1)} -e sh -c \"cat /tmp/cortex-git-status.txt; echo; echo Press Enter to close; read\"' >/dev/null 2>&1 &")
+    emit ""
+}
+func gitPull(dir) {
+    if gitIsRepo(dir) == 0 { emit "" }
+    exec("setsid sh -c 'cd \"" + dir + "\" && git pull --ff-only 2>&1; echo; echo Press Enter to close; read' >/dev/null 2>&1 &")
+    emit ""
+}
+func gitPush(dir) {
+    if gitIsRepo(dir) == 0 { emit "" }
+    exec("setsid sh -c 'cd \"" + dir + "\" && git push 2>&1; echo; echo Press Enter to close; read' >/dev/null 2>&1 &")
+    emit ""
+}
+
+func openWithDialog(path) {
+    let mime = chomp(exec("xdg-mime query filetype '" + path + "' 2>/dev/null"))
+    let apps = chomp(exec("grep -l '" + mime + "' /usr/share/applications/*.desktop ~/.local/share/applications/*.desktop 2>/dev/null | head -20"))
+    let list = "/tmp/cortex-openwith-" + chomp(exec("date +%s%N | tail -c 10")) + ".txt"
+    let n = countLines(apps)
+    let i = 0
+    let out = ""
+    while i < n {
+        let df = nthLine(apps, i)
+        if df != "" {
+            let nm = chomp(exec("grep -m1 '^Name=' '" + df + "' | cut -d= -f2-"))
+            let ex = chomp(exec("grep -m1 '^Exec=' '" + df + "' | cut -d= -f2- | sed 's/ %[fFuUdDnNickvm]//g'"))
+            if nm != "" && ex != "" { out = out + nm + "	" + ex + "\n" }
+        }
+        i = i + 1
+    }
+    if out == "" { exec("notify-send -a cortex 'cortex' 'No handlers for " + mime + "' 2>/dev/null")  emit "" }
+    writeFile(list, out)
+    exec("setsid sh -c 'choice=$(awk -F\"\\t\" \"{print NR\\\" \\\"\\$1}\" \"" + list + "\" | ${DMENU:-wofi --dmenu -i -p Open-With} 2>/dev/null || awk -F\"\\t\" \"{print NR\\\" \\\"\\$1}\" \"" + list + "\" | fzf --prompt=\"Open with> \" ) || exit 0; n=$(echo \"$choice\" | awk \"{print \\$1}\"); cmd=$(sed -n \"${n}p\" \"" + list + "\" | cut -f2-); setsid sh -c \"$cmd '" + path + "'\" >/dev/null 2>&1' >/dev/null 2>&1 &")
+    emit ""
+}
+
+func xdgTrashPath(p) {
+    let trash = homeDir() + "/.local/share/Trash"
+    let files = trash + "/files"
+    let info = trash + "/info"
+    exec("mkdir -p '" + files + "' '" + info + "'")
+    let bn = basename(p)
+    let dest = files + "/" + bn
+    let n = 1
+    while chomp(exec("test -e '" + dest + "' && echo 1")) == "1" {
+        dest = files + "/" + bn + "." + toStr(n)
+        n = n + 1
+    }
+    let dname = basename(dest)
+    let ts = chomp(exec("date +%Y-%m-%dT%H:%M:%S"))
+    writeFile(info + "/" + dname + ".trashinfo", "[Trash Info]\nPath=" + p + "\nDeletionDate=" + ts + "\n")
+    exec("mv '" + p + "' '" + dest + "' 2>/dev/null")
+    emit "1"
+}
+
+func bulkRename(cwd, marked) {
+    if marked == "" { emit "" }
+    let id = chomp(exec("date +%s%N | tail -c 10"))
+    let list = "/tmp/cortex-bulk-" + id + ".txt"
+    let edited = "/tmp/cortex-bulk-" + id + ".new"
+    let script = "/tmp/cortex-bulk-" + id + ".sh"
+    let sig = "/tmp/cortex-bulk-" + id + ".sig"
+    let out = ""
+    let n = countLines(marked)
+    let i = 0
+    while i < n {
+        let nm = nthLine(marked, i)
+        if nm != "" && nm != ".." { out = out + nm + "\n" }
+        i = i + 1
+    }
+    writeFile(list, out)
+    exec("cp '" + list + "' '" + edited + "'")
+    let term = cfgGet("terminal")
+    if term == "" { term = chomp(exec("printf %s \"${TERMINAL:-$(command -v ghostty kitty alacritty foot wezterm xterm 2>/dev/null | head -1)}\"")) }
+    let ed = chomp(exec("printf %s \"${EDITOR:-nano}\""))
+    let sh = "#!/bin/sh\n" + ed + " '" + edited + "'\n" +
+        "i=0\nwhile IFS= read -r old <&3 && IFS= read -r nw <&4; do\n" +
+        "  i=$((i+1))\n  [ -z \"$old\" ] && continue\n  [ -z \"$nw\" ] && continue\n  [ \"$old\" = \"$nw\" ] && continue\n  [ \"$nw\" = '..' ] && continue\n" +
+        "  mv -n '" + cwd + "/'$old '" + cwd + "/'$nw 2>/dev/null\n" +
+        "done 3<'" + list + "' 4<'" + edited + "'\ntouch '" + sig + "'\n"
+    writeFile(script, sh)
+    exec("chmod +x '" + script + "'; setsid " + term + " -e sh '" + script + "' >/dev/null 2>&1 &")
+    emit sig
+}
+
+func watchDir(cwd) {
+    // inotify-based auto-refresh signal file
+    let sig = "/tmp/cortex-watch-" + chomp(exec("date +%s%N | tail -c 10")) + ".sig"
+    exec("rm -f '" + sig + "'; setsid sh -c 'command -v inotifywait >/dev/null 2>&1 || exit 0; inotifywait -q -e modify,create,delete,move -t 300 \"" + cwd + "\" >/dev/null 2>&1 && touch \"" + sig + "\"' >/dev/null 2>&1 &")
+    emit sig
+}
+
+func hyprDropdownSetup() {
+    let cls = "cortex"
+    exec("hyprctl keyword windowrulev2 'float, class:^(" + cls + ")$,title:^(cortex-dropdown)$' >/dev/null 2>&1")
+    exec("hyprctl keyword windowrulev2 'workspace special:cortex, class:^(" + cls + ")$,title:^(cortex-dropdown)$' >/dev/null 2>&1")
+    exec("hyprctl keyword windowrulev2 'size 80% 60%, class:^(" + cls + ")$,title:^(cortex-dropdown)$' >/dev/null 2>&1")
+    exec("hyprctl keyword windowrulev2 'center, class:^(" + cls + ")$,title:^(cortex-dropdown)$' >/dev/null 2>&1")
+    exec("hyprctl keyword windowrulev2 'animation slide, class:^(" + cls + ")$,title:^(cortex-dropdown)$' >/dev/null 2>&1")
+    emit "1"
+}
+
+func thumbPath(path) {
+    let hash = chomp(exec("printf '%s' 'file://" + path + "' | md5sum | cut -d' ' -f1"))
+    emit homeDir() + "/.cache/thumbnails/large/" + hash + ".png"
+}
+func ensureThumb(path) {
+    let tp = thumbPath(path)
+    if chomp(exec("test -f '" + tp + "' && echo 1")) == "1" { emit tp }
+    let ext = lastExt(basename(path))
+    exec("mkdir -p '" + homeDir() + "/.cache/thumbnails/large'")
+    if ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "gif" || ext == "webp" || ext == "bmp" {
+        exec("convert '" + path + "' -thumbnail 256x256 '" + tp + "' 2>/dev/null")
+    }
+    if ext == "pdf" { exec("pdftoppm -png -singlefile -scale-to 256 '" + path + "' '" + homeDir() + "/.cache/thumbnails/large/tmp-thumb' 2>/dev/null && mv '" + homeDir() + "/.cache/thumbnails/large/tmp-thumb.png' '" + tp + "' 2>/dev/null") }
+    if chomp(exec("test -f '" + tp + "' && echo 1")) == "1" { emit tp }
+    emit ""
 }
 func removeBookmark(cwd) {
     let bp = bookmarksPath()
@@ -486,15 +680,108 @@ func compressEntry(cwd, name) {
     exec("cd '" + cwd + "' && (zip -r -q '" + name + ".zip' '" + name + "' 2>/dev/null || tar czf '" + name + ".tar.gz' '" + name + "' 2>/dev/null)")
 }
 func openTerminal(cwd) {
-    exec("cd '" + cwd + "' && setsid sh -c '${TERMINAL:-$(command -v ghostty kitty alacritty foot wezterm xterm 2>/dev/null | head -1)}' >/dev/null 2>&1 &")
+    let term = cfgGet("terminal")
+    if term == "" { term = chomp(exec("printf %s \"${TERMINAL:-$(command -v ghostty kitty alacritty foot wezterm xterm 2>/dev/null | head -1)}\"")) }
+    exec("cd '" + cwd + "' && setsid " + term + " >/dev/null 2>&1 &")
 }
 
-func sortName(m) { if m == 1 { emit "size" }  if m == 2 { emit "date" }  emit "name" }
-func buildEntries(cwd, showHidden, sortMode) {
+func sortName(m) { if m == 1 { emit "size" }  if m == 2 { emit "date" }  if m == 3 { emit "kind" }  emit "name" }
+func sortAscLabel(asc) { if asc == 1 { emit "asc" }  emit "desc" }
+
+func fuzzyScore(pattern, text) {
+    if pattern == "" { emit 1 }
+    let p = lowerStr(pattern)
+    let t = lowerStr(text)
+    let pi = 0
+    let ti = 0
+    let score = 0
+    let streak = 0
+    while pi < len(p) && ti < len(t) {
+        if p[pi] == t[ti] {
+            score = score + 1 + streak
+            if pi == ti { score = score + 2 }
+            streak = streak + 1
+            pi = pi + 1
+        } else { streak = 0 }
+        ti = ti + 1
+    }
+    if pi < len(p) { emit 0 - 1 }
+    emit score
+}
+func fuzzyMatch(pattern, text) { if fuzzyScore(pattern, text) >= 0 { emit 1 }  emit 0 }
+
+func gitAvailable() { if chomp(exec("command -v git >/dev/null 2>&1 && echo 1")) == "1" { emit 1 }  emit 0 }
+func gitIsRepo(dir) { if chomp(exec("git -C '" + dir + "' rev-parse --is-inside-work-tree 2>/dev/null")) == "true" { emit 1 }  emit 0 }
+func gitBranch(dir) { emit chomp(exec("git -C '" + dir + "' symbolic-ref --short -q HEAD 2>/dev/null || git -C '" + dir + "' rev-parse --short HEAD 2>/dev/null")) }
+func gitCounts(dir) {
+    let out = chomp(exec("git -C '" + dir + "' rev-list --left-right --count '@{upstream}...HEAD' 2>/dev/null"))
+    if out == "" { emit "0|0" }
+    let a = ""  let b = ""  let seen = 0
+    let i = 0
+    while i <= len(out) {
+        let ch = " "
+        if i < len(out) { ch = out[i] }
+        if ch == " " || ch == fromCharCode(9) {
+            if seen == 0 && a != "" { seen = 1 }
+        } else { if seen == 0 { a = a + ch } else { b = b + ch } }
+        i = i + 1
+    }
+    if b == "" { b = "0" }
+    emit a + "|" + b
+}
+func gitStatusMap(dir) {
+    if gitIsRepo(dir) == 0 { emit "" }
+    let out = exec("git -C '" + dir + "' status --porcelain --ignored=no 2>/dev/null")
+    let map = ""
+    let i = 0
+    let line = ""
+    while i <= len(out) {
+        let ch = fromCharCode(10)
+        if i < len(out) { ch = out[i] }
+        if ch == fromCharCode(10) {
+            if len(line) > 3 {
+                let code = substring(line, 0, 2)
+                let path = substring(line, 3, len(line))
+                let arrow = indexOf(path, " -> ")
+                if arrow >= 0 { path = substring(path, arrow + 4, len(path)) }
+                path = basename(chomp(path))
+                let badge = "M"
+                if contains(code, "?") { badge = "?" }
+                if contains(code, "A") { badge = "A" }
+                if contains(code, "D") { badge = "D" }
+                if contains(code, "R") { badge = "R" }
+                if contains(code, "U") { badge = "!" }
+                map = map + path + fromCharCode(9) + badge + fromCharCode(10)
+            }
+            line = ""
+        } else { line = line + ch }
+        i = i + 1
+    }
+    emit map
+}
+func gitBadgeFor(map, name) {
+    if map == "" { emit "" }
+    let key = name + fromCharCode(9)
+    let i = 0
+    let line = ""
+    while i <= len(map) {
+        let ch = fromCharCode(10)
+        if i < len(map) { ch = map[i] }
+        if ch == fromCharCode(10) {
+            if startsWith(line, key) { emit substring(line, len(key), len(line)) }
+            line = ""
+        } else { line = line + ch }
+        i = i + 1
+    }
+    emit ""
+}
+
+func buildEntries(cwd, showHidden, sortMode, sortAsc) {
     let flag = "-1p"
     if showHidden == 1 { flag = flag + "A" }
     if sortMode == 1 { flag = flag + "S" }   // size
     if sortMode == 2 { flag = flag + "t" }   // date
+    if sortAsc == 0 { flag = flag + "r" }
     let raw = exec("ls " + flag + " '" + cwd + "' 2>/dev/null")
     let dirs = ""
     let files = ""
@@ -511,7 +798,90 @@ func buildEntries(cwd, showHidden, sortMode) {
         } else { line = line + ch }
         i += 1
     }
+    if sortMode == 3 {
+        // sort by kind (extension), then name; keep dirs first
+        dirs = sortLinesByKind(dirs, sortAsc)
+        files = sortLinesByKind(files, sortAsc)
+    }
     emit "d ..\n" + dirs + files
+}
+func sortLinesByKind(lines, asc) {
+    // simple insertion sort by ext+name; lines are "d/f name\n"
+    let n = countLines(lines)
+    let arr = ""
+    let i = 0
+    while i < n {
+        let ln = nthLine(lines, i)
+        if ln != "" {
+            let nm = substring(ln, 2, len(ln))
+            let k = lowerStr(lastExt(nm)) + "|" + lowerStr(nm)
+            arr = arr + k + fromCharCode(9) + ln + fromCharCode(10)
+        }
+        i = i + 1
+    }
+    // bubble-ish by repeated extraction - small n typical; acceptable
+    let out = ""
+    let used = ""
+    let j = 0
+    while j < n {
+        let bestIdx = 0 - 1
+        let bestKey = ""
+        let bestLn = ""
+        let k2 = 0
+        while k2 < n {
+            if csvHas(used, toStr(k2)) == 0 {
+                let rec = nthLine(arr, k2)
+                let tpos = indexOf(rec, fromCharCode(9))
+                let key = substring(rec, 0, tpos)
+                let ln2 = substring(rec, tpos + 1, len(rec))
+                if bestIdx < 0 {
+                    bestIdx = k2  bestKey = key  bestLn = ln2
+                } else {
+                    let cmp = strCmp(key, bestKey)
+                    if asc == 1 { if cmp < 0 { bestIdx = k2  bestKey = key  bestLn = ln2 } }
+                    if asc == 0 { if cmp > 0 { bestIdx = k2  bestKey = key  bestLn = ln2 } }
+                }
+            }
+            k2 = k2 + 1
+        }
+        if bestIdx >= 0 { used = csvAdd(used, toStr(bestIdx))  out = out + bestLn + fromCharCode(10) }
+        j = j + 1
+    }
+    emit out
+}
+func csvAdd(csv, item) {
+    if csv == "" { emit item }
+    emit csv + "\n" + item
+}
+func csvHas(csv, item) {
+    let i = 0
+    let c = countLines(csv)
+    while i < c {
+        if nthLine(csv, i) == item { emit "1" }
+        i = i + 1
+    }
+    emit "0"
+}
+func strCmp(a, b) {
+    let i = 0
+    while i < len(a) && i < len(b) {
+        if charCode(a[i]) < charCode(b[i]) { emit 0 - 1 }
+        if charCode(a[i]) > charCode(b[i]) { emit 1 }
+        i = i + 1
+    }
+    if len(a) < len(b) { emit 0 - 1 }
+    if len(a) > len(b) { emit 1 }
+    emit 0
+}
+func formatBytes(ns) {
+    let b = toInt(ns)
+    if b < 1024 { emit ns + " B" }
+    let kb = b / 1024
+    if kb < 1024 { emit toStr(kb) + " KB" }
+    let mb = kb / 1024
+    if mb < 1024 { emit toStr(mb) + " MB" }
+    let gb = mb / 1024
+    emit toStr(gb) + " GB"
 }
 func entryIsDir(entries, row) { emit nthLine(entries, row)[0] == "d" }
 func entryName(entries, row)  { let l = nthLine(entries, row)  emit substring(l, 2, len(l)) }
@@ -586,6 +956,10 @@ func markAll(entries) {
 }
 
 func lc1(c) { if c >= "A" && c <= "Z" { emit fromCharCode(charCode(c) + 32) }  emit c }
+func startsWith(s, p) {
+    if len(p) > len(s) { emit 0 }
+    emit substring(s, 0, len(p)) == p
+}
 func hasPrefixCI(s, p) {
     if len(p) > len(s) { emit 0 }
     let i = 0
@@ -622,7 +996,7 @@ func filterEntries(all, q) {
         let line = nthLine(all, i)
         let nm = substring(line, 2, len(line))
         if nm == ".." { out = out + line + "\n" }
-        else { if containsCI(nm, q) == 1 { out = out + line + "\n" } }
+        else { if fuzzyMatch(q, nm) == 1 { out = out + line + "\n" } }
         i += 1
     }
     emit out
@@ -638,11 +1012,33 @@ func findPrefix(entries, prefix) {
     emit 0 - 1
 }
 
-func buildStatus(cwd, entries) {
+func markedSize(cwd, marked) {
+    let total = 0
+    let n = countLines(marked)
+    let i = 0
+    while i < n {
+        let nm = nthLine(marked, i)
+        if nm != "" && nm != ".." {
+            let p = joinDir(cwd, nm)
+            let sz = chomp(exec("du -sb '" + p + "' 2>/dev/null | cut -f1"))
+            if sz != "" { total = total + toInt(sz) }
+        }
+        i = i + 1
+    }
+    emit total
+}
+func buildStatus(cwd, entries, gitBranchStr, gitAheadN, gitBehindN, marked) {
     let n = countLines(entries) - 1   // minus ".."
     if n < 0 { n = 0 }
     let free = chomp(exec("df -h --output=avail '" + cwd + "' 2>/dev/null | tail -1 | tr -d ' '"))
-    emit n + " items     " + free + " free"
+    let s = n + " items     " + free + " free"
+    if gitBranchStr != "" {
+        s = s + "     " + gitBranchStr
+        if gitAheadN != "0" { s = s + " ↑" + gitAheadN }
+        if gitBehindN != "0" { s = s + " ↓" + gitBehindN }
+    }
+    if marked != "" { s = countLines(marked) + " selected (" + formatBytes(toStr(markedSize(cwd, marked))) + ")     " + s }
+    emit s
 }
 func parentDir(cwd) {
     let i = len(cwd) - 1
@@ -870,7 +1266,10 @@ func repaint(fd, info, cwd, entries, sel, places, w, h, folderSml, folderBig, fi
                         if entryIsDir(entries, i) { blitIcon(fd, win, gcRow, cx + 8, iy, folderSml, scratch, bg, ICONSML()) }
                         else { blitIcon(fd, win, gcRow, cx + 8, iy, fileSml, scratch, bg, ICONSML()) }
                     }
-                    x11ImageText8(fd, win, lblGc, cx + 8 + ICONSML() + 12, cy + rowH / 2 + 5, entryName(entries, i))
+                    let nm = entryName(entries, i)
+                    x11ImageText8(fd, win, lblGc, cx + 8 + ICONSML() + 12, cy + rowH / 2 + 5, nm)
+                    let gb = gitBadgeFor(gitMap, nm)
+                    if gb != "" { x11ImageText8(fd, win, gcSideTx, cx + 8 + ICONSML() + 12 + len(nm) * charW() + 10, cy + rowH / 2 + 5, gb) }
                 } else {
                     let ix = cx + (cellW - ICONBIG()) / 2
                     let iy = cy + 10
@@ -902,8 +1301,7 @@ func repaint(fd, info, cwd, entries, sel, places, w, h, folderSml, folderBig, fi
     } else { if searchMode == 1 {
         x11ImageText8(fd, win, gcStat, 10, sy + 16, "search:  " + searchText + "_")
     } else {
-        let statTxt = buildStatus(cwd, entries)
-        if marked != "" { statTxt = countLines(marked) + " selected     " + statTxt }
+        let statTxt = buildStatus(cwd, entries, gitBranchStr, gitAheadN, gitBehindN, marked)
         x11ImageText8(fd, win, gcStat, 10, sy + 16, statTxt)
         if sel >= 0 && sel < nrows {
             let snm = entryName(entries, sel)
@@ -960,8 +1358,17 @@ just run {
     let win = x11GenId(info, 1)
     x11CreateWindow(fd, win, root, 80, 60, W(), H(), cBg(dark), 163845)
     // window identity so Hyprland/WMs can match it (class:cortex / title cortex)
-    x11SetClass(fd, win, "cortex", "cortex")
-    x11SetTitle(fd, win, "cortex")
+    let isDropdown = 0
+    let dropEnv = chomp(exec("printf %s \"${CORTEX_DROPDOWN:-}\""))
+    if cfgGet("dropdown") == "1" || cfgGet("mode") == "dropdown" || dropEnv == "1" { isDropdown = 1 }
+    if isDropdown == 1 {
+        hyprDropdownSetup()
+        x11SetClass(fd, win, "cortex", "cortex")
+        x11SetTitle(fd, win, "cortex-dropdown")
+    } else {
+        x11SetClass(fd, win, "cortex", "cortex")
+        x11SetTitle(fd, win, "cortex")
+    }
     // advertise WM_DELETE_WINDOW so the WM's close action sends a ClientMessage
     // we can quit on (InternAtom replies must be read before mapping).
     let wmProtocols = x11InternAtom(fd, "WM_PROTOCOLS")
@@ -1082,13 +1489,29 @@ just run {
     x11SetTitle(fd, win, "cortex - " + basename(cwd))
     let showHidden = 0
     let sortMode = 0
+    let sortAsc = 1
     let searchMode = 0
     let marked = ""
     let viewMode = 0
-    if chomp(exec("cat '" + homeDir() + "/.config/cortex/view' 2>/dev/null")) == "list" { viewMode = 1 }
-    let searchText = ""  marked = ""
-    let allEntries = buildEntries(cwd, showHidden, sortMode)
+    let cfgDir = homeDir() + "/.config/cortex"
+    if chomp(exec("cat '" + cfgDir + "/view' 2>/dev/null")) == "list" { viewMode = 1 }
+    let savedSort = chomp(exec("cat '" + cfgDir + "/sort' 2>/dev/null"))
+    if savedSort == "size" { sortMode = 1 }
+    if savedSort == "date" { sortMode = 2 }
+    if savedSort == "kind" { sortMode = 3 }
+    if chomp(exec("cat '" + cfgDir + "/sortasc' 2>/dev/null")) == "0" { sortAsc = 0 }
+    if chomp(exec("cat '" + cfgDir + "/hidden' 2>/dev/null")) == "1" { showHidden = 1 }
+    let searchText = ""
+    let gitMap = ""
+    let gitBranchStr = ""
+    let gitAheadN = "0"
+    let gitBehindN = "0"
+    let allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)
     let entries = allEntries
+    gitMap = gitStatusMap(cwd)
+    gitBranchStr = gitBranch(cwd)
+    gitBehindN = beforeBar(gitCounts(cwd))
+    gitAheadN = afterBar(gitCounts(cwd))
     let places = buildSidebar()
     let sel = 0
     let scroll = 0
@@ -1111,6 +1534,8 @@ just run {
     let histIdx = 0
     let addr = cwd
     let addrFocused = 0
+    let watchSig = watchDir(cwd)
+    let bulkSig = ""
 
     let ev = bufNew(32)
     let running = 1
@@ -1119,14 +1544,25 @@ just run {
         if n <= 0 { running = 0 }
         else {
             let t = x11EventType(ev)
+            // check async signals (inotify / bulk rename)
+            if bulkSig != "" && chomp(exec("test -f '" + bulkSig + "' && echo 1")) == "1" {
+                exec("rm -f '" + bulkSig + "'")
+                bulkSig = ""
+                allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))
+            }
+            if watchSig != "" && chomp(exec("test -f '" + watchSig + "' && echo 1")) == "1" {
+                exec("rm -f '" + watchSig + "'")
+                watchSig = watchDir(cwd)
+                allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))
+            }
             if t == 12 {
                 // re-scan devices on (re)expose so hot-plugged drives show up
                 places = buildSidebar()
-                repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig)
+                repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap)
             } else if t == 22 {
                 curW = x11EventWidth(ev)
                 curH = x11EventHeight(ev)
-                repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig)
+                repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap)
             } else if t == 4 {
                 let ex = x11EventX(ev)
                 let ey = x11EventY(ev)
@@ -1134,26 +1570,34 @@ just run {
                 let btn = x11KeyDetail(ev)
                 if helpOpen == 1 {
                     helpOpen = 0
-                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig)
+                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap)
                 } else if menuOpen == 1 {
                     // click while the context menu is open: run an item or dismiss
                     menuOpen = 0
                     let tgt = menuTarget
                     if ex >= menuX && ex < menuX + MENUW() && ey >= menuY + 4 {
                         let mi = (ey - menuY - 4) / MENUROW()
-                        if mi == 0 { if tgt >= 0 { if entryIsDir(entries, tgt) { let nm = entryName(entries, tgt)  if nm == ".." { cwd = parentDir(cwd) } else { cwd = joinDir(cwd, nm) }  hist = truncLines(hist, histIdx + 1) + cwd + "\n"  histIdx = countLines(hist) - 1  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - " + basename(cwd)) } else { openFile(joinDir(cwd, entryName(entries, tgt))) } } }
-                        else if mi == 1 { if tgt >= 0 && entryName(entries, tgt) != ".." { clipboard = joinDir(cwd, entryName(entries, tgt))  clipOp = "cut" } }
-                        else if mi == 2 { if tgt >= 0 && entryName(entries, tgt) != ".." { clipboard = joinDir(cwd, entryName(entries, tgt))  clipOp = "copy" } }
-                        else if mi == 3 { if clipboard != "" { pasteClip(cwd, clipboard, clipOp)  if clipOp == "cut" { clipboard = ""  clipOp = "" }  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries } }
-                        else if mi == 4 { if tgt >= 0 && entryName(entries, tgt) != ".." { sel = tgt  renaming = 1  renameText = entryName(entries, tgt) } }
-                        else if mi == 5 { if tgt >= 0 && entryName(entries, tgt) != ".." { trashItem(joinDir(cwd, entryName(entries, tgt)))  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  if sel >= countLines(entries) { sel = countLines(entries) - 1 } } }
-                        else if mi == 6 { newFolder(cwd)  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  let nf = rowOfName(entries, "New Folder")  if nf >= 0 { sel = nf  renaming = 1  renameText = "" } }
-                        else if mi == 7 { openTerminal(cwd) }
-                        else if mi == 8 { if tgt >= 0 && entryName(entries, tgt) != ".." { duplicateEntry(cwd, entryName(entries, tgt))  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries } }
-                        else if mi == 9 { if tgt >= 0 && entryName(entries, tgt) != ".." { compressEntry(cwd, entryName(entries, tgt))  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries } }
-                        else if mi == 10 { if tgt >= 0 && entryName(entries, tgt) != ".." { showProps(joinDir(cwd, entryName(entries, tgt)), entryName(entries, tgt)) } }
+                        if mi == 0 { if tgt >= 0 { if entryIsDir(entries, tgt) { let nm = entryName(entries, tgt)  if nm == ".." { cwd = parentDir(cwd) } else { cwd = joinDir(cwd, nm) }  hist = truncLines(hist, histIdx + 1) + cwd + "\n"  histIdx = countLines(hist) - 1  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  watchSig = watchDir(cwd)  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - " + basename(cwd)) } else { openFile(joinDir(cwd, entryName(entries, tgt))) } } }
+                        else if mi == 1 { if tgt >= 0 && entryName(entries, tgt) != ".." { openWithDialog(joinDir(cwd, entryName(entries, tgt))) } }
+                        else if mi == 2 { if tgt >= 0 && entryName(entries, tgt) != ".." { clipboard = joinDir(cwd, entryName(entries, tgt))  clipOp = "cut" } }
+                        else if mi == 3 { if tgt >= 0 && entryName(entries, tgt) != ".." { clipboard = joinDir(cwd, entryName(entries, tgt))  clipOp = "copy" } }
+                        else if mi == 4 { if clipboard != "" { pasteClip(cwd, clipboard, clipOp)  if clipOp == "cut" { clipboard = ""  clipOp = "" }  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd)) } }
+                        else if mi == 5 { if tgt >= 0 && entryName(entries, tgt) != ".." { sel = tgt  renaming = 1  renameText = entryName(entries, tgt) } }
+                        else if mi == 6 { let bm = marked  if bm == "" && tgt >= 0 && entryName(entries, tgt) != ".." { bm = entryName(entries, tgt) }  if bm != "" { bulkSig = bulkRename(cwd, bm) } }
+                        else if mi == 7 { if tgt >= 0 && entryName(entries, tgt) != ".." { trashItem(joinDir(cwd, entryName(entries, tgt)))  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  if sel >= countLines(entries) { sel = countLines(entries) - 1 } } }
+                        else if mi == 8 { newFolder(cwd)  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  let nf = rowOfName(entries, "New Folder")  if nf >= 0 { sel = nf  renaming = 1  renameText = "" } }
+                        else if mi == 9 { openTerminal(cwd) }
+                        else if mi == 10 { if tgt >= 0 && entryName(entries, tgt) != ".." { duplicateEntry(cwd, entryName(entries, tgt))  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd)) } }
+                        else if mi == 11 { if tgt >= 0 && entryName(entries, tgt) != ".." { compressEntry(cwd, entryName(entries, tgt))  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd)) } }
+                        else if mi == 12 { if tgt >= 0 && entryName(entries, tgt) != ".." { showProps(joinDir(cwd, entryName(entries, tgt)), entryName(entries, tgt)) } }
+                        else if mi == 13 { if tgt >= 0 && entryName(entries, tgt) != ".." { copyChecksum(joinDir(cwd, entryName(entries, tgt)), "md5") } }
+                        else if mi == 14 { if tgt >= 0 && entryName(entries, tgt) != ".." { copyChecksum(joinDir(cwd, entryName(entries, tgt)), "sha256") } }
+                        else if mi == 15 { if tgt >= 0 && entryName(entries, tgt) != ".." { showFolderSize(joinDir(cwd, entryName(entries, tgt)), entryName(entries, tgt)) } }
+                        else if mi == 16 { showGitStatus(cwd) }
+                        else if mi == 17 { gitPull(cwd) }
+                        else if mi == 18 { gitPush(cwd) }
                     }
-                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig)
+                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap)
                 } else if btn == 3 && ex < SIDEBAR() && ey >= TOP() {
                     // right-click a drive in the sidebar -> unmount/eject it
                     let pr = (ey - TOP()) / ROWH()
@@ -1162,7 +1606,7 @@ just run {
                         if fieldAt(line, 0) == "d" && fieldAt(line, 2) != "" {
                             exec("udisksctl unmount -b '" + fieldAt(line, 3) + "' >/dev/null 2>&1")
                             places = buildSidebar()
-                            repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig)
+                            repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap)
                         }
                     }
                 } else if btn == 3 {
@@ -1181,22 +1625,22 @@ just run {
                     if menuX + MENUW() > curW { menuX = curW - MENUW() - 4 }
                     let menuH = countLines(menuItems()) * MENUROW() + 8
                     if menuY + menuH > curH { menuY = curH - menuH - 4 }
-                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig)
+                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap)
                 } else if btn == 4 || btn == 5 {
                     // mouse wheel -> scroll the grid
                     let ms = maxScroll(countLines(entries), colsFor(curW, viewMode), curH - STATUSH() - TOP() - GRIDPAD(), viewMode)
                     if btn == 4 { if scroll > 0 { scroll = scroll - 1 } }
                     else { if scroll < ms { scroll = scroll + 1 } }
-                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig)
+                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap)
                 } else if ey >= TITLEH() && ey < TOP() {
                     // toolbar
                     addrFocused = 0
                     if ex >= backX() && ex < backX() + BTNW() {
-                        if histIdx > 0 { histIdx = histIdx - 1  cwd = nthLine(hist, histIdx)  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - " + basename(cwd)) }
+                        if histIdx > 0 { histIdx = histIdx - 1  cwd = nthLine(hist, histIdx)  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  watchSig = watchDir(cwd)  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - " + basename(cwd)) }
                     } else if ex >= fwdX() && ex < fwdX() + BTNW() {
-                        if histIdx < countLines(hist) - 1 { histIdx = histIdx + 1  cwd = nthLine(hist, histIdx)  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - " + basename(cwd)) }
+                        if histIdx < countLines(hist) - 1 { histIdx = histIdx + 1  cwd = nthLine(hist, histIdx)  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  watchSig = watchDir(cwd)  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - " + basename(cwd)) }
                     } else if ex >= refX() && ex < refX() + BTNW() {
-                        allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries
+                        allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))
                         places = buildSidebar()
                     } else if ex >= curW - 2 * VTW() - 16 && ex < curW - VTW() - 12 {
                         searchMode = 1  searchText = ""  marked = ""
@@ -1208,12 +1652,12 @@ just run {
                         let cp = crumbHit(cwd, addrX() + 12, cbW, ex)
                         if cp != "" && cp != cwd {
                             cwd = cp  hist = truncLines(hist, histIdx + 1) + cwd + "\n"  histIdx = countLines(hist) - 1
-                            allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries
+                            allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))
                             addr = cwd  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""
                             x11SetTitle(fd, win, "cortex - " + basename(cwd))
                         } else { addrFocused = 1  addr = cwd }
                     }
-                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig)
+                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap)
                 } else if ey >= TOP() {
                     addrFocused = 0
                     if ex < SIDEBAR() {
@@ -1231,7 +1675,7 @@ just run {
                                 cwd = dest
                                 hist = truncLines(hist, histIdx + 1) + cwd + "\n"
                                 histIdx = countLines(hist) - 1
-                                allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries
+                                allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))
                                 sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""
                                 places = buildSidebar()
                                 x11SetTitle(fd, win, "cortex - " + basename(cwd))
@@ -1253,7 +1697,7 @@ just run {
                                     cwd = dst
                                     hist = truncLines(hist, histIdx + 1) + cwd + "\n"
                                     histIdx = countLines(hist) - 1
-                                    allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries
+                                    allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))
                                     sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""
                                     x11SetTitle(fd, win, "cortex - " + basename(cwd))
                                 } else {
@@ -1264,7 +1708,7 @@ just run {
                             lastTime = time
                         }
                     }
-                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig)
+                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap)
                 }
             } else if t == 2 {
                 let kc = x11KeyDetail(ev)
@@ -1278,7 +1722,7 @@ just run {
                     else if kc == 36 {                                          // Enter commit
                         if renameText != "" {
                             renameTo(cwd, entryName(entries, sel), renameText)
-                            allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries
+                            allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))
                         }
                         renaming = 0
                     }
@@ -1287,7 +1731,7 @@ just run {
                         let ch = keyChar(kmap, kc, shift)
                         if ch != "" { renameText = renameText + ch }
                     }
-                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig)
+                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap)
                 } else if searchMode == 1 {
                     // incremental filter of the current folder
                     if kc == 9 { searchMode = 0  searchText = ""  marked = ""  entries = allEntries  sel = 0 }
@@ -1297,7 +1741,7 @@ just run {
                         let ch = keyChar(kmap, kc, shift)
                         if ch != "" { searchText = searchText + ch  entries = filterEntries(allEntries, searchText)  sel = 0 }
                     }
-                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig)
+                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap)
                 } else if addrFocused == 1 {
                     // editing the address bar
                     if kc == 9 { addrFocused = 0 }                              // Esc
@@ -1306,7 +1750,7 @@ just run {
                             cwd = chomp(addr)
                             hist = truncLines(hist, histIdx + 1) + cwd + "\n"
                             histIdx = countLines(hist) - 1
-                            allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries
+                            allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))
                             sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""
                             x11SetTitle(fd, win, "cortex - " + basename(cwd))
                         }
@@ -1317,70 +1761,73 @@ just run {
                         let ch = keyChar(kmap, kc, shift)
                         if ch != "" { addr = addr + ch }
                     }
-                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig)
+                    repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap)
                 } else {
-                    if kc == 9 { if helpOpen == 1 { helpOpen = 0  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) } else { if marked != "" { marked = ""  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) } else { running = 0 } } }  // Esc: clear selection, else quit
-                    else if kc == 67 { if helpOpen == 1 { helpOpen = 0 } else { helpOpen = 1 }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // F1 help
+                    if kc == 9 { if helpOpen == 1 { helpOpen = 0  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) } else { if marked != "" { marked = ""  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) } else { running = 0 } } }  // Esc: clear selection, else quit
+                    else if kc == 67 { if helpOpen == 1 { helpOpen = 0 } else { helpOpen = 1 }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // F1 help
                     else if (kc == 25 || kc == 24) && ctrl == 1 { running = 0 }  // Ctrl+W / Ctrl+Q close
-                    else if kc == 58 && ctrl == 1 { mountAllDrives()  places = buildSidebar()  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Ctrl+M mount all drives
-                    else if kc == 23 { viewMode = 1 - viewMode  scroll = 0  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Tab toggle view
-                    else if kc == 10 && ctrl == 1 { viewMode = 0  scroll = 0  exec("mkdir -p '" + homeDir() + "/.config/cortex'; printf grid > '" + homeDir() + "/.config/cortex/view'")  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Ctrl+1 grid
-                    else if kc == 11 && ctrl == 1 { viewMode = 1  scroll = 0  exec("mkdir -p '" + homeDir() + "/.config/cortex'; printf list > '" + homeDir() + "/.config/cortex/view'")  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Ctrl+2 list
-                    else if kc == 38 && ctrl == 1 && shift == 0 { marked = markAll(entries)  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Ctrl+A select all
-                    else if kc == 38 && ctrl == 1 && shift == 1 { marked = ""  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Ctrl+Shift+A clear selection
-                    else if kc == 65 { if sel >= 0 && sel < countLines(entries) && entryName(entries, sel) != ".." { marked = markToggle(marked, entryName(entries, sel)) }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Space toggle mark
-                    else if kc == 113 && alt == 1 { if histIdx > 0 { histIdx = histIdx - 1  cwd = nthLine(hist, histIdx)  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  addr = cwd  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - " + basename(cwd)) }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Alt+Left back
-                    else if kc == 114 && alt == 1 { if histIdx < countLines(hist) - 1 { histIdx = histIdx + 1  cwd = nthLine(hist, histIdx)  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  addr = cwd  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - " + basename(cwd)) }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Alt+Right forward
-                    else if kc == 110 && alt == 1 { cwd = homeDir()  hist = truncLines(hist, histIdx + 1) + cwd + "\n"  histIdx = countLines(hist) - 1  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  addr = cwd  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - " + basename(cwd))  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Alt+Home home dir
-                    else if kc == 46 && ctrl == 1 { addrFocused = 1  addr = cwd  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Ctrl+L address
-                    else if kc == 41 && ctrl == 1 { searchMode = 1  searchText = ""  marked = ""  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Ctrl+F search
-                    else if kc == 71 { allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  places = buildSidebar()  searchMode = 0  searchText = ""  marked = ""  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // F5 refresh
-                    else if kc == 40 && ctrl == 1 && shift == 1 { removeBookmark(cwd)  places = buildSidebar()  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Ctrl+Shift+D unbookmark
-                    else if kc == 26 && ctrl == 1 { if sel >= 0 && sel < countLines(entries) && entryIsDir(entries, sel) == 0 { extractArchive(cwd, entryName(entries, sel))  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Ctrl+E extract
-                    else if kc == 27 && ctrl == 1 && shift == 1 { if sel >= 0 && sel < countLines(entries) && entryName(entries, sel) != ".." { duplicateEntry(cwd, entryName(entries, sel))  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Ctrl+D duplicate
-                    else if kc == 52 && ctrl == 1 && shift == 1 { if sel >= 0 && sel < countLines(entries) && entryName(entries, sel) != ".." { compressEntry(cwd, entryName(entries, sel))  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Ctrl+Shift+Z compress
-                    else if kc == 28 && ctrl == 1 && shift == 1 { exec("mkdir -p '" + homeDir() + "/.local/share/Trash/files' 2>/dev/null")  cwd = homeDir() + "/.local/share/Trash/files"  hist = truncLines(hist, histIdx + 1) + cwd + "\n"  histIdx = countLines(hist) - 1  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  addr = cwd  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - Trash")  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Ctrl+Shift+T trash view
+                    else if kc == 58 && ctrl == 1 { mountAllDrives()  places = buildSidebar()  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Ctrl+M mount all drives
+                    else if kc == 23 { viewMode = 1 - viewMode  scroll = 0  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Tab toggle view
+                    else if kc == 10 && ctrl == 1 { viewMode = 0  scroll = 0  exec("mkdir -p '" + homeDir() + "/.config/cortex'; printf grid > '" + homeDir() + "/.config/cortex/view'")  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Ctrl+1 grid
+                    else if kc == 11 && ctrl == 1 { viewMode = 1  scroll = 0  exec("mkdir -p '" + homeDir() + "/.config/cortex'; printf list > '" + homeDir() + "/.config/cortex/view'")  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Ctrl+2 list
+                    else if kc == 38 && ctrl == 1 && shift == 0 { marked = markAll(entries)  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Ctrl+A select all
+                    else if kc == 38 && ctrl == 1 && shift == 1 { marked = ""  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Ctrl+Shift+A clear selection
+                    else if kc == 65 { if sel >= 0 && sel < countLines(entries) && entryName(entries, sel) != ".." { marked = markToggle(marked, entryName(entries, sel)) }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Space toggle mark
+                    else if kc == 113 && alt == 1 { if histIdx > 0 { histIdx = histIdx - 1  cwd = nthLine(hist, histIdx)  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  addr = cwd  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - " + basename(cwd)) }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Alt+Left back
+                    else if kc == 114 && alt == 1 { if histIdx < countLines(hist) - 1 { histIdx = histIdx + 1  cwd = nthLine(hist, histIdx)  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  addr = cwd  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - " + basename(cwd)) }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Alt+Right forward
+                    else if kc == 110 && alt == 1 { cwd = homeDir()  hist = truncLines(hist, histIdx + 1) + cwd + "\n"  histIdx = countLines(hist) - 1  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  addr = cwd  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - " + basename(cwd))  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Alt+Home home dir
+                    else if kc == 46 && ctrl == 1 { addrFocused = 1  addr = cwd  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Ctrl+L address
+                    else if kc == 41 && ctrl == 1 { searchMode = 1  searchText = ""  marked = ""  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Ctrl+F search
+                    else if kc == 71 { allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  places = buildSidebar()  searchMode = 0  searchText = ""  marked = ""  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // F5 refresh
+                    else if kc == 73 { newFolder(cwd)  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  let nf = rowOfName(entries, "New Folder")  if nf >= 0 { sel = nf  renaming = 1  renameText = "" }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // F7 new folder
+                    else if kc == 74 { if marked != "" { trashMarked(cwd, marked)  marked = ""  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  if sel >= countLines(entries) { sel = countLines(entries) - 1 } } else { if sel >= 0 && sel < countLines(entries) && entryName(entries, sel) != ".." { trashItem(joinDir(cwd, entryName(entries, sel)))  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  if sel >= countLines(entries) { sel = countLines(entries) - 1 } } }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // F8 trash
+                    else if kc == 40 && ctrl == 1 && shift == 1 { removeBookmark(cwd)  places = buildSidebar()  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Ctrl+Shift+D unbookmark
+                    else if kc == 26 && ctrl == 1 { if sel >= 0 && sel < countLines(entries) && entryIsDir(entries, sel) == 0 { extractArchive(cwd, entryName(entries, sel))  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd)) }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Ctrl+E extract
+                    else if kc == 27 && ctrl == 1 && shift == 1 { if sel >= 0 && sel < countLines(entries) && entryName(entries, sel) != ".." { duplicateEntry(cwd, entryName(entries, sel))  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd)) }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Ctrl+D duplicate
+                    else if kc == 52 && ctrl == 1 && shift == 1 { if sel >= 0 && sel < countLines(entries) && entryName(entries, sel) != ".." { compressEntry(cwd, entryName(entries, sel))  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd)) }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Ctrl+Shift+Z compress
+                    else if kc == 28 && ctrl == 1 && shift == 1 { exec("mkdir -p '" + homeDir() + "/.local/share/Trash/files' 2>/dev/null")  cwd = homeDir() + "/.local/share/Trash/files"  hist = truncLines(hist, histIdx + 1) + cwd + "\n"  histIdx = countLines(hist) - 1  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  addr = cwd  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - Trash")  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Ctrl+Shift+T trash view
                     else if kc == 36 {                                          // Enter -> open sel (dir) / open file
                         if entryIsDir(entries, sel) {
                             let name = entryName(entries, sel)
                             if name == ".." { cwd = parentDir(cwd) } else { cwd = joinDir(cwd, name) }
                             hist = truncLines(hist, histIdx + 1) + cwd + "\n"
                             histIdx = countLines(hist) - 1
-                            allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries
+                            allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))
                             sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""
                             x11SetTitle(fd, win, "cortex - " + basename(cwd))
                         } else { openFile(joinDir(cwd, entryName(entries, sel))) }
-                        repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig)
+                        repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap)
                     }
-                    else if kc == 43 && ctrl == 1 { if showHidden == 1 { showHidden = 0 } else { showHidden = 1 }  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Ctrl+H hidden
-                    else if kc == 39 && ctrl == 1 { sortMode = sortMode + 1  if sortMode > 2 { sortMode = 0 }  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - " + basename(cwd) + " [" + sortName(sortMode) + "]")  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Ctrl+S cycle sort
+                    else if kc == 43 && ctrl == 1 { if showHidden == 1 { showHidden = 0 } else { showHidden = 1 }  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  watchSig = watchDir(cwd)  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  exec("mkdir -p '" + cfgDir + "'; printf %s '" + toStr(showHidden) + "' > '" + cfgDir + "/hidden'")  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Ctrl+H hidden
+                    else if kc == 39 && ctrl == 1 && shift == 1 { if sortAsc == 1 { sortAsc = 0 } else { sortAsc = 1 }  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  watchSig = watchDir(cwd)  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  exec("mkdir -p '" + cfgDir + "'; printf %s '" + toStr(sortAsc) + "' > '" + cfgDir + "/sortasc'")  x11SetTitle(fd, win, "cortex - " + basename(cwd) + " [" + sortName(sortMode) + " " + sortAscLabel(sortAsc) + "]")  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Ctrl+Shift+S toggle sort direction
+                    else if kc == 39 && ctrl == 1 { sortMode = sortMode + 1  if sortMode > 3 { sortMode = 0 }  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  watchSig = watchDir(cwd)  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  exec("mkdir -p '" + cfgDir + "'; printf %s '" + sortName(sortMode) + "' > '" + cfgDir + "/sort'")  x11SetTitle(fd, win, "cortex - " + basename(cwd) + " [" + sortName(sortMode) + " " + sortAscLabel(sortAsc) + "]")  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Ctrl+S cycle sort
                     else if kc == 31 && ctrl == 1 { if sel >= 0 && sel < countLines(entries) { showProps(joinDir(cwd, entryName(entries, sel)), entryName(entries, sel)) } }  // Ctrl+I properties
-                    else if kc == 57 && ctrl == 1 && shift == 0 { newFile(cwd)  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  let nf = rowOfName(entries, "New File")  if nf >= 0 { sel = nf  renaming = 1  renameText = "" }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Ctrl+N new file
+                    else if kc == 57 && ctrl == 1 && shift == 0 { newFile(cwd)  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  let nf = rowOfName(entries, "New File")  if nf >= 0 { sel = nf  renaming = 1  renameText = "" }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Ctrl+N new file
                     else if kc == 54 && ctrl == 1 && shift == 1 { if sel >= 0 && sel < countLines(entries) { copyPath(joinDir(cwd, entryName(entries, sel))) } }  // Ctrl+Shift+C copy path
-                    else if kc == 57 && ctrl == 1 && shift == 1 { newFolder(cwd)  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  let nf = rowOfName(entries, "New Folder")  if nf >= 0 { sel = nf  renaming = 1  renameText = "" }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // n new folder
+                    else if kc == 57 && ctrl == 1 && shift == 1 { newFolder(cwd)  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  let nf = rowOfName(entries, "New Folder")  if nf >= 0 { sel = nf  renaming = 1  renameText = "" }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // n new folder
                     else if kc == 70 { openTerminal(cwd) }                       // F4 terminal here
-                    else if kc == 68 { if sel >= 0 && sel < countLines(entries) && entryName(entries, sel) != ".." { renaming = 1  renameText = entryName(entries, sel) }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // F2 rename
-                    else if kc == 119 { if marked != "" { trashMarked(cwd, marked)  marked = ""  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  if sel >= countLines(entries) { sel = countLines(entries) - 1 } } else { if sel >= 0 && sel < countLines(entries) && entryName(entries, sel) != ".." { trashItem(joinDir(cwd, entryName(entries, sel)))  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  if sel >= countLines(entries) { sel = countLines(entries) - 1 } } }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Delete -> trash
+                    else if kc == 68 { if sel >= 0 && sel < countLines(entries) && entryName(entries, sel) != ".." { renaming = 1  renameText = entryName(entries, sel) }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // F2 rename
+                    else if kc == 119 { if marked != "" { trashMarked(cwd, marked)  marked = ""  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  if sel >= countLines(entries) { sel = countLines(entries) - 1 } } else { if sel >= 0 && sel < countLines(entries) && entryName(entries, sel) != ".." { trashItem(joinDir(cwd, entryName(entries, sel)))  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  if sel >= countLines(entries) { sel = countLines(entries) - 1 } } }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Delete -> trash
                     else if kc == 54 && ctrl == 1 && shift == 0 { if marked != "" { clipboard = clipFromMarked(cwd, marked)  clipOp = "copy" } else { if sel >= 0 && entryName(entries, sel) != ".." { clipboard = joinDir(cwd, entryName(entries, sel))  clipOp = "copy" } } }  // Ctrl+C
                     else if kc == 53 && ctrl == 1 && shift == 0 { if marked != "" { clipboard = clipFromMarked(cwd, marked)  clipOp = "cut" } else { if sel >= 0 && entryName(entries, sel) != ".." { clipboard = joinDir(cwd, entryName(entries, sel))  clipOp = "cut" } } }   // Ctrl+X
                     else if kc == 55 && ctrl == 1 {                                                                            // Ctrl+V paste
                         if clipboard != "" {
                             pasteClip(cwd, clipboard, clipOp)
                             if clipOp == "cut" { clipboard = ""  clipOp = "" }
-                            allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries
+                            allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))
                         }
-                        repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig)
+                        repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap)
                     }
-                    else if kc == 22 { cwd = parentDir(cwd)  hist = truncLines(hist, histIdx + 1) + cwd + "\n"  histIdx = countLines(hist) - 1  allEntries = buildEntries(cwd, showHidden, sortMode)  entries = allEntries  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - " + basename(cwd))  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }
-                    else if kc == 40 && ctrl == 1 { addBookmark(cwd)  places = buildSidebar()  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }
-                    else if kc == 116 { let c = colsFor(curW, viewMode)  if sel + c < countLines(entries) { sel = sel + c }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }
-                    else if kc == 111 { let c = colsFor(curW, viewMode)  if sel - c >= 0 { sel = sel - c }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }
-                    else if kc == 114 { if sel + 1 < countLines(entries) { sel += 1 }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }
-                    else if kc == 113 { if sel > 0 { sel = sel - 1 }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }
-                    else if kc == 117 { let vh = curH - STATUSH() - TOP() - GRIDPAD()  let ms = maxScroll(countLines(entries), colsFor(curW, viewMode), vh, viewMode)  let pg = vh / rowHFor(viewMode)  if pg < 1 { pg = 1 }  scroll = scroll + pg  if scroll > ms { scroll = ms }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // PageDown
-                    else if kc == 112 { let vh = curH - STATUSH() - TOP() - GRIDPAD()  let pg = vh / rowHFor(viewMode)  if pg < 1 { pg = 1 }  scroll = scroll - pg  if scroll < 0 { scroll = 0 }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // PageUp
-                    else if kc == 110 { scroll = 0  sel = 0  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // Home
-                    else if kc == 115 { let ms = maxScroll(countLines(entries), colsFor(curW, viewMode), curH - STATUSH() - TOP() - GRIDPAD(), viewMode)  scroll = ms  if countLines(entries) > 0 { sel = countLines(entries) - 1 }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig) }  // End
+                    else if kc == 22 { cwd = parentDir(cwd)  hist = truncLines(hist, histIdx + 1) + cwd + "\n"  histIdx = countLines(hist) - 1  allEntries = buildEntries(cwd, showHidden, sortMode, sortAsc)  entries = allEntries  gitMap = gitStatusMap(cwd)  gitBranchStr = gitBranch(cwd)  gitBehindN = beforeBar(gitCounts(cwd))  gitAheadN = afterBar(gitCounts(cwd))  watchSig = watchDir(cwd)  sel = 0  scroll = 0  searchMode = 0  searchText = ""  marked = ""  x11SetTitle(fd, win, "cortex - " + basename(cwd))  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }
+                    else if kc == 40 && ctrl == 1 { addBookmark(cwd)  places = buildSidebar()  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }
+                    else if kc == 116 { let c = colsFor(curW, viewMode)  if sel + c < countLines(entries) { sel = sel + c }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }
+                    else if kc == 111 { let c = colsFor(curW, viewMode)  if sel - c >= 0 { sel = sel - c }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }
+                    else if kc == 114 { if sel + 1 < countLines(entries) { sel += 1 }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }
+                    else if kc == 113 { if sel > 0 { sel = sel - 1 }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }
+                    else if kc == 117 { let vh = curH - STATUSH() - TOP() - GRIDPAD()  let ms = maxScroll(countLines(entries), colsFor(curW, viewMode), vh, viewMode)  let pg = vh / rowHFor(viewMode)  if pg < 1 { pg = 1 }  scroll = scroll + pg  if scroll > ms { scroll = ms }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // PageDown
+                    else if kc == 112 { let vh = curH - STATUSH() - TOP() - GRIDPAD()  let pg = vh / rowHFor(viewMode)  if pg < 1 { pg = 1 }  scroll = scroll - pg  if scroll < 0 { scroll = 0 }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // PageUp
+                    else if kc == 110 { scroll = 0  sel = 0  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // Home
+                    else if kc == 115 { let ms = maxScroll(countLines(entries), colsFor(curW, viewMode), curH - STATUSH() - TOP() - GRIDPAD(), viewMode)  scroll = ms  if countLines(entries) > 0 { sel = countLines(entries) - 1 }  repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap) }  // End
                     else if ctrl == 0 {
                         // type-ahead: jump selection to the first matching name
                         let ch = keyChar(kmap, kc, shift)
@@ -1397,7 +1844,7 @@ just run {
                                 if rowi < scroll { scroll = rowi }
                                 if rowi >= scroll + vis { scroll = rowi - vis + 1 }
                             }
-                            repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig)
+                            repaint(fd, info, cwd, entries, sel, places, curW, curH, folderSml, folderBig, fileBig, scratch, haveIcons, addr, addrFocused, backRaw, fwdRaw, reloadRaw, dark, driveSml, scroll, renaming, renameText, menuOpen, menuX, menuY, helpOpen, searchMode, searchText, marked, imageBig, archiveBig, mediaBig, viewMode, fileSml, docBig, dlBig, musicBig, picBig, vidBig, deskBig, gitBranchStr, gitAheadN, gitBehindN, gitMap)
                         }
                     }
                 }
